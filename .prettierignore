@@ -1,0 +1,9 @@
+.next
+.next-build
+.next-e2e*
+node_modules
+coverage
+playwright-report
+test-results
+src/generated
+package-lock.json

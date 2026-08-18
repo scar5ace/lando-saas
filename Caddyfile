@@ -1,0 +1,19 @@
+{
+	admin off
+}
+
+{$CADDY_SITE_ADDRESS:http://localhost} {
+	encode zstd gzip
+
+	request_body {
+		max_size 10MB
+	}
+
+	header -Server
+
+	reverse_proxy app:3000 {
+		health_uri /api/health/ready
+		health_interval 30s
+		health_timeout 5s
+	}
+}

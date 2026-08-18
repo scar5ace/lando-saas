@@ -1,0 +1,357 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum ProjectStatus {
+  DRAFT     @map("draft")
+  PUBLISHED @map("published")
+  ARCHIVED  @map("archived")
+
+  @@map("project_status")
+}
+
+enum PageVersionSource {
+  MANUAL  @map("manual")
+  AI      @map("ai")
+  PUBLISH @map("publish")
+
+  @@map("page_version_source")
+}
+
+enum AssetType {
+  IMAGE @map("image")
+
+  @@map("asset_type")
+}
+
+enum DomainStatus {
+  PENDING  @map("pending")
+  VERIFIED @map("verified")
+  FAILED   @map("failed")
+
+  @@map("domain_status")
+}
+
+enum SslStatus {
+  PENDING @map("pending")
+  ACTIVE  @map("active")
+  FAILED  @map("failed")
+
+  @@map("ssl_status")
+}
+
+enum SubmissionStatus {
+  NEW      @map("new")
+  READ     @map("read")
+  ARCHIVED @map("archived")
+  SPAM     @map("spam")
+
+  @@map("submission_status")
+}
+
+enum IntegrationType {
+  TELEGRAM       @map("telegram")
+  YANDEX_METRIKA @map("yandex_metrika")
+
+  @@map("integration_type")
+}
+
+enum IntegrationStatus {
+  INACTIVE @map("inactive")
+  ACTIVE   @map("active")
+  ERROR    @map("error")
+
+  @@map("integration_status")
+}
+
+enum SubscriptionProvider {
+  MOCK     @map("mock")
+  YOOKASSA @map("yookassa")
+
+  @@map("subscription_provider")
+}
+
+enum SubscriptionPlan {
+  FREE @map("free")
+  PRO  @map("pro")
+
+  @@map("subscription_plan")
+}
+
+enum SubscriptionStatus {
+  ACTIVE     @map("active")
+  PAST_DUE   @map("past_due")
+  CANCELED   @map("canceled")
+  INCOMPLETE @map("incomplete")
+
+  @@map("subscription_status")
+}
+
+// Better Auth 1.6.25 core model. Password hashes live in Account.password.
+model User {
+  id            String         @id
+  name          String
+  email         String         @unique(map: "user_email_key")
+  emailVerified Boolean        @default(false) @map("email_verified")
+  image         String?
+  createdAt     DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+  sessions      Session[]
+  accounts      Account[]
+  projects      Project[]
+  subscriptions Subscription[]
+  aiUsages      AiUsage[]
+  auditLogs     AuditLog[]
+
+  @@map("user")
+}
+
+// Better Auth 1.6.25 core model.
+model Session {
+  id        String   @id
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
+  token     String   @unique(map: "session_token_key")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  ipAddress String?  @map("ip_address")
+  userAgent String?  @map("user_agent")
+  userId    String   @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade, map: "session_user_id_fkey")
+
+  @@index([userId], map: "session_user_id_idx")
+  @@index([expiresAt], map: "session_expires_at_idx")
+  @@map("session")
+}
+
+// Better Auth 1.6.25 core model.
+model Account {
+  id                    String    @id
+  accountId             String    @map("account_id")
+  providerId            String    @map("provider_id")
+  userId                String    @map("user_id")
+  accessToken           String?   @map("access_token") @db.Text
+  refreshToken          String?   @map("refresh_token") @db.Text
+  idToken               String?   @map("id_token") @db.Text
+  accessTokenExpiresAt  DateTime? @map("access_token_expires_at") @db.Timestamptz(3)
+  refreshTokenExpiresAt DateTime? @map("refresh_token_expires_at") @db.Timestamptz(3)
+  scope                 String?
+  password              String?   @db.Text
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt             DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade, map: "account_user_id_fkey")
+
+  @@unique([providerId, accountId], map: "account_provider_id_account_id_key")
+  @@index([userId], map: "account_user_id_idx")
+  @@map("account")
+}
+
+// Better Auth 1.6.25 core model.
+model Verification {
+  id         String   @id
+  identifier String
+  value      String   @db.Text
+  expiresAt  DateTime @map("expires_at") @db.Timestamptz(3)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@index([identifier], map: "verification_identifier_idx")
+  @@index([expiresAt], map: "verification_expires_at_idx")
+  @@map("verification")
+}
+
+// Better Auth database-backed rate limiter model.
+model RateLimit {
+  id          String @id
+  key         String @unique(map: "rate_limit_key_key")
+  count       Int
+  lastRequest BigInt @map("last_request")
+
+  @@map("rate_limit")
+}
+
+model Project {
+  id           String        @id @default(cuid())
+  userId       String        @map("user_id")
+  name         String        @db.VarChar(120)
+  slug         String        @unique(map: "project_slug_key") @db.VarChar(63)
+  status       ProjectStatus @default(DRAFT)
+  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+  user         User          @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "project_user_id_fkey")
+  page         Page?
+  assets       Asset[]
+  domains      Domain[]
+  forms        Form[]
+  integrations Integration[]
+  aiUsages     AiUsage[]
+  auditLogs    AuditLog[]
+
+  @@index([userId, updatedAt], map: "project_user_id_updated_at_idx")
+  @@index([userId, status], map: "project_user_id_status_idx")
+  @@map("project")
+}
+
+model Page {
+  id              String        @id @default(cuid())
+  projectId       String        @unique(map: "page_project_id_key") @map("project_id")
+  draftSchema     Json          @map("draft_schema") @db.JsonB
+  publishedSchema Json?         @map("published_schema") @db.JsonB
+  publishedAt     DateTime?     @map("published_at") @db.Timestamptz(3)
+  draftRevision   Int           @default(0) @map("draft_revision")
+  createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+  project         Project       @relation(fields: [projectId], references: [id], onDelete: Cascade, onUpdate: Cascade, map: "page_project_id_fkey")
+  versions        PageVersion[]
+
+  @@map("page")
+}
+
+model PageVersion {
+  id        String            @id @default(cuid())
+  pageId    String            @map("page_id")
+  schema    Json              @db.JsonB
+  source    PageVersionSource
+  prompt    String?           @db.Text
+  createdAt DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  page      Page              @relation(fields: [pageId], references: [id], onDelete: Cascade, onUpdate: Cascade, map: "page_version_page_id_fkey")
+
+  @@index([pageId, createdAt], map: "page_version_page_id_created_at_idx")
+  @@map("page_version")
+}
+
+model Asset {
+  id         String    @id @default(cuid())
+  projectId  String    @map("project_id")
+  type       AssetType @default(IMAGE)
+  storageKey String    @unique(map: "asset_storage_key_key") @map("storage_key")
+  mimeType   String    @map("mime_type") @db.VarChar(100)
+  size       Int
+  width      Int?
+  height     Int?
+  alt        String    @default("") @db.VarChar(500)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  project    Project   @relation(fields: [projectId], references: [id], onDelete: Cascade, onUpdate: Cascade, map: "asset_project_id_fkey")
+
+  @@index([projectId, createdAt], map: "asset_project_id_created_at_idx")
+  @@map("asset")
+}
+
+model Domain {
+  id                String       @id @default(cuid())
+  projectId         String       @map("project_id")
+  hostname          String       @unique(map: "domain_hostname_key") @db.VarChar(253)
+  status            DomainStatus @default(PENDING)
+  verificationToken String       @unique(map: "domain_verification_token_key") @map("verification_token")
+  verifiedAt        DateTime?    @map("verified_at") @db.Timestamptz(3)
+  sslStatus         SslStatus    @default(PENDING) @map("ssl_status")
+  createdAt         DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+  project           Project      @relation(fields: [projectId], references: [id], onDelete: Cascade, onUpdate: Cascade, map: "domain_project_id_fkey")
+
+  @@index([projectId, status], map: "domain_project_id_status_idx")
+  @@map("domain")
+}
+
+model Form {
+  id          String       @id @default(cuid())
+  projectId   String       @map("project_id")
+  blockId     String       @map("block_id") @db.VarChar(100)
+  name        String       @db.VarChar(120)
+  fields      Json         @db.JsonB
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade, onUpdate: Cascade, map: "form_project_id_fkey")
+  submissions Submission[]
+
+  @@unique([projectId, blockId], map: "form_project_id_block_id_key")
+  @@index([projectId, createdAt], map: "form_project_id_created_at_idx")
+  @@map("form")
+}
+
+model Submission {
+  id        String           @id @default(cuid())
+  formId    String           @map("form_id")
+  payload   Json             @db.JsonB
+  sourceUrl String?          @map("source_url") @db.Text
+  ipHash    String?          @map("ip_hash") @db.VarChar(128)
+  userAgent String?          @map("user_agent") @db.Text
+  status    SubmissionStatus @default(NEW)
+  createdAt DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+  form      Form             @relation(fields: [formId], references: [id], onDelete: Cascade, onUpdate: Cascade, map: "submission_form_id_fkey")
+
+  @@index([formId, createdAt], map: "submission_form_id_created_at_idx")
+  @@index([formId, status], map: "submission_form_id_status_idx")
+  @@map("submission")
+}
+
+model Integration {
+  id              String            @id @default(cuid())
+  projectId       String            @map("project_id")
+  type            IntegrationType
+  encryptedConfig Json              @map("encrypted_config") @db.JsonB
+  status          IntegrationStatus @default(INACTIVE)
+  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
+  project         Project           @relation(fields: [projectId], references: [id], onDelete: Cascade, onUpdate: Cascade, map: "integration_project_id_fkey")
+
+  @@unique([projectId, type], map: "integration_project_id_type_key")
+  @@index([projectId, status], map: "integration_project_id_status_idx")
+  @@map("integration")
+}
+
+model Subscription {
+  id                      String               @id @default(cuid())
+  userId                  String               @map("user_id")
+  provider                SubscriptionProvider
+  providerCustomerId      String?              @unique(map: "subscription_provider_customer_id_key") @map("provider_customer_id")
+  providerPaymentMethodId String?              @unique(map: "subscription_provider_payment_method_id_key") @map("provider_payment_method_id")
+  plan                    SubscriptionPlan     @default(FREE)
+  status                  SubscriptionStatus   @default(ACTIVE)
+  currentPeriodEnd        DateTime?            @map("current_period_end") @db.Timestamptz(3)
+  createdAt               DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt               DateTime             @updatedAt @map("updated_at") @db.Timestamptz(3)
+  user                    User                 @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade, map: "subscription_user_id_fkey")
+
+  @@index([userId, status], map: "subscription_user_id_status_idx")
+  @@index([currentPeriodEnd], map: "subscription_current_period_end_idx")
+  @@map("subscription")
+}
+
+model AiUsage {
+  id            String   @id @default(cuid())
+  userId        String?  @map("user_id")
+  projectId     String?  @map("project_id")
+  operation     String   @db.VarChar(100)
+  provider      String   @db.VarChar(50)
+  inputTokens   Int?     @map("input_tokens")
+  outputTokens  Int?     @map("output_tokens")
+  estimatedCost Decimal? @map("estimated_cost") @db.Decimal(18, 6)
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  user          User?    @relation(fields: [userId], references: [id], onDelete: SetNull, onUpdate: Cascade, map: "ai_usage_user_id_fkey")
+  project       Project? @relation(fields: [projectId], references: [id], onDelete: SetNull, onUpdate: Cascade, map: "ai_usage_project_id_fkey")
+
+  @@index([userId, createdAt], map: "ai_usage_user_id_created_at_idx")
+  @@index([projectId, createdAt], map: "ai_usage_project_id_created_at_idx")
+  @@map("ai_usage")
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?  @map("user_id")
+  projectId String?  @map("project_id")
+  action    String   @db.VarChar(150)
+  metadata  Json     @db.JsonB
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull, onUpdate: Cascade, map: "audit_log_user_id_fkey")
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: SetNull, onUpdate: Cascade, map: "audit_log_project_id_fkey")
+
+  @@index([userId, createdAt], map: "audit_log_user_id_created_at_idx")
+  @@index([projectId, createdAt], map: "audit_log_project_id_created_at_idx")
+  @@index([action, createdAt], map: "audit_log_action_created_at_idx")
+  @@map("audit_log")
+}

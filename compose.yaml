@@ -1,0 +1,134 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+x-app-environment: &app-environment
+  NODE_ENV: ${LANDO_RUNTIME_ENV:-development}
+  NODE_EXTRA_CA_CERTS: /usr/local/share/ca-certificates/russian_trusted_root_ca_pem.crt
+  DATABASE_URL: postgresql://lando:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/lando?schema=public
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: lando
+      POSTGRES_USER: lando
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    logging: *default-logging
+
+  migrate:
+    build:
+      context: .
+      target: tools
+    env_file:
+      - .env
+    environment: *app-environment
+    command: ["npm", "run", "db:deploy"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+
+  app:
+    build:
+      context: .
+      target: ${LANDO_IMAGE_TARGET:-development}
+      args:
+        BUILD_APP_NAME: "${APP_NAME:-Lando}"
+        BUILD_APP_URL: "${APP_URL:-http://localhost:3000}"
+        BUILD_PLATFORM_ROOT_DOMAIN: "${PLATFORM_ROOT_DOMAIN:-localhost}"
+    restart: unless-stopped
+    init: true
+    env_file:
+      - .env
+    environment: *app-environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - uploads_data:/app/public/uploads
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging: *default-logging
+
+  backup:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: lando
+      PGUSER: lando
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-7}
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        umask 077
+        while true; do
+          timestamp="$$(date -u +%Y%m%dT%H%M%SZ)"
+          target="/backups/lando-$${timestamp}.dump"
+          if ! pg_dump --format=custom --no-owner --no-privileges --file="$${target}.partial"; then
+            rm -f "$${target}.partial"
+            echo "PostgreSQL backup failed" >&2
+            exit 1
+          fi
+          mv "$${target}.partial" "$${target}"
+          find /backups -type f -name 'lando-*.dump' -mtime "+$${BACKUP_RETENTION_DAYS}" -delete
+          find /backups -type f -name 'lando-*.dump.partial' -mtime +1 -delete
+          echo "PostgreSQL backup completed: $${target}"
+          sleep "$${BACKUP_INTERVAL_SECONDS}"
+        done
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - ./backups:/backups
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging: *default-logging
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      CADDY_SITE_ADDRESS: ${CADDY_SITE_ADDRESS:-http://localhost}
+    ports:
+      - "${LANDO_HTTP_PORT:-3000}:80"
+      - "${LANDO_HTTPS_PORT:-3443}:443"
+      - "${LANDO_HTTPS_PORT:-3443}:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+
+volumes:
+  postgres_data:
+  uploads_data:
+  caddy_data:
+  caddy_config:
